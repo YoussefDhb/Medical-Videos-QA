@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cassiopée - Medical VideoRAG</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        .video-container {
+            position: sticky;
+            top: 1rem;
+        }
+        .prose p { margin-bottom: 1rem; }
+        .prose ul { list-style-type: disc; padding-left: 1.5rem; margin-bottom: 1rem; }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen font-sans">
+    <!-- Navbar -->
+    <nav class="bg-indigo-700 text-white shadow-lg p-4">
+        <div class="container mx-auto flex justify-between items-center">
+            <h1 class="text-2xl font-bold flex items-center">
+                <i class="fas fa-microscope mr-3"></i> Cassiopée
+            </h1>
+            <div class="text-sm bg-indigo-800 px-3 py-1 rounded-full">
+                Medical VideoRAG Chassis
+            </div>
+        </div>
+    </nav>
+
+    <main class="container mx-auto mt-8 p-4">
+        <!-- Search Section -->
+        <div class="max-w-4xl mx-auto mb-10">
+            <div class="bg-white rounded-2xl shadow-md p-6">
+                <form id="search-form" class="space-y-4">
+                    <div class="relative">
+                        <input type="text" id="query" 
+                               class="w-full pl-12 pr-4 py-4 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-lg shadow-sm"
+                               placeholder="Ask a medical question (e.g., 'How to do a mouth cancer check at home?')">
+                        <i class="fas fa-search absolute left-4 top-5 text-slate-400 text-xl"></i>
+                    </div>
+
+
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center space-x-4">
+                            <label class="text-sm font-medium text-slate-600">Video Knowledge:</label>
+                            <select id="split" class="bg-slate-100 border-none rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500">
+                                <option value="train">Seen Videos (Trained On)</option>
+                                <option value="unseen">Unseen Videos (New Knowledge)</option>
+                                <option value="all">All Videos (Combined)</option>
+                            </select>
+                        </div>
+                        <button type="submit" id="search-btn"
+                                class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-8 rounded-xl transition-all shadow-lg flex items-center">
+                            <span>Search</span>
+                            <div id="loader" class="hidden ml-3 animate-spin h-5 w-5 border-2 border-white border-t-transparent rounded-full"></div>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <div id="results-container" class="hidden grid grid-cols-1 lg:grid-cols-12 gap-8">
+            <!-- Left Side: Segments List -->
+            <div class="lg:col-span-7 space-y-6">
+                <!-- Top Segments List -->
+                <div class="bg-white rounded-2xl shadow-md p-6">
+                    <h3 class="text-lg font-bold text-slate-800 mb-4">Retrieved Video Segments</h3>
+                    <div id="segments-list" class="space-y-4">
+                        <!-- Segments here -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Side: Video Player -->
+            <div class="lg:col-span-5">
+                <div class="video-container space-y-4">
+                    <div class="bg-black rounded-2xl overflow-hidden shadow-2xl aspect-video relative group">
+                        <video id="main-video" controls class="w-full h-full">
+                            <source src="" type="video/mp4">
+                            Your browser does not support the video tag.
+                        </video>
+                        <div id="video-overlay" class="absolute inset-0 flex items-center justify-center bg-black/60 text-white pointer-events-none transition-opacity opacity-0">
+                            <p class="text-lg font-medium">Jumping to timestamp...</p>
+                        </div>
+                    </div>
+                    <div class="bg-white rounded-xl shadow-sm p-4 border border-slate-100">
+                        <p id="current-video-id" class="text-sm font-bold text-indigo-700 truncate"></p>
+                        <p id="current-timestamp" class="text-xs text-slate-500"></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Initial Placeholder -->
+        <div id="empty-state" class="text-center py-20 opacity-40">
+            <i class="fas fa-film text-8xl mb-4 text-slate-300"></i>
+            <h3 class="text-2xl font-medium">Ready for your query</h3>
+            <p>Type a question above to begin retrieval</p>
+        </div>
+    </main>
+
+    <script>
+        const searchForm = document.getElementById('search-form');
+        const resultsContainer = document.getElementById('results-container');
+        const emptyState = document.getElementById('empty-state');
+        const videoElement = document.getElementById('main-video');
+        const loader = document.getElementById('loader');
+        const searchBtn = document.getElementById('search-btn');
+
+
+        searchForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const query = document.getElementById('query').value;
+            const split = document.getElementById('split').value;
+
+            if (!query) return;
+
+            // Show loading state
+            loader.classList.remove('hidden');
+            searchBtn.disabled = true;
+            searchBtn.classList.add('opacity-50');
+
+            try {
+                const response = await fetch('/search', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        query, 
+                        split
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (data.error) {
+                    alert('Error: ' + data.error);
+                    return;
+                }
+
+                displayResults(data, split, query);
+            } catch (err) {
+                console.error(err);
+                alert('An error occurred during search.');
+            } finally {
+                loader.classList.add('hidden');
+                searchBtn.disabled = false;
+                searchBtn.classList.remove('opacity-50');
+            }
+        });
+
+        function displayResults(data, split, query) {
+            emptyState.classList.add('hidden');
+            resultsContainer.classList.remove('hidden');
+
+            // 1. Render Segments List
+            const segmentsList = document.getElementById('segments-list');
+            segmentsList.innerHTML = '';
+            
+            // Sort by combined_score just in case (though backend should handle it)
+            data.results.sort((a, b) => (b.combined_score || 0) - (a.combined_score || 0));
+
+            data.results.forEach((seg, index) => {
+                const item = document.createElement('div');
+                item.className = "group relative flex flex-col p-4 bg-white border border-slate-100 rounded-xl hover:border-indigo-300 hover:shadow-md transition-all mb-4";
+                
+                const resultSplit = seg.split && seg.split !== "unknown" ? seg.split : split;
+                
+                const score = seg.combined_score ? (seg.combined_score * 100).toFixed(1) : "N/A";
+                const scoreColor = seg.combined_score > 0.7 ? "text-green-600" : (seg.combined_score > 0.4 ? "text-yellow-600" : "text-slate-400");
+
+                item.innerHTML = `
+                    <div class="flex items-center justify-between mb-2 cursor-pointer" onclick="playVideo('${seg.video_id}', ${JSON.stringify(seg.timestamp)}, '${resultSplit}')">
+                        <div class="flex items-center space-x-4">
+                            <div class="w-10 h-10 bg-indigo-50 rounded-lg flex items-center justify-center text-indigo-600 font-bold">
+                                ${index + 1}
+                            </div>
+                            <div>
+                                <p class="font-bold text-slate-800 text-sm">${seg.video_id}</p>
+                                <p class="text-xs text-slate-500">${formatTimestamp(seg.timestamp)}</p>
+                            </div>
+                        </div>
+                        <div class="flex items-center space-x-4">
+                            <div class="relative group">
+                                <div class="text-right">
+                                    <p class="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Confidence</p>
+                                    <p class="font-mono font-bold ${scoreColor}">${score}%</p>
+                                </div>
+                                <div class="absolute bottom-full mb-2 right-0 w-48 bg-slate-700 text-white text-xs rounded-lg py-2 px-3 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                                    <div class="font-bold text-slate-200">Score Breakdown:</div>
+                                    <div class="flex justify-between"><span>Text Score:</span> <span>${(seg.text_score * 100).toFixed(1)}%</span></div>
+                                    <div class="flex justify-between"><span>Visual Score:</span> <span>${(seg.visual_score * 100).toFixed(1)}%</span></div>
+                                    <div class="mt-1 pt-1 border-t border-slate-500/50 flex justify-between font-bold"><span>Combined:</span> <span>${score}%</span></div>
+                                    ${seg.feedback_boosted ? '<div class="mt-1 text-green-300 font-bold text-center border-t border-slate-500/50 pt-1">Boosted by You!</div>' : ''}
+                                </div>
+                            </div>
+                            <div class="text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <i class="fas fa-play-circle text-xl"></i>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="flex justify-end pt-2 mt-2 border-t border-slate-50">
+                        <button class="feedback-btn text-xs flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-slate-50 text-slate-500 hover:bg-green-50 hover:text-green-600 transition-colors border border-transparent hover:border-green-100">
+                            <i class="fas fa-thumbs-up"></i>
+                            <span>Mark as Best Match</span>
+                        </button>
+                    </div>
+                `;
+
+                const feedbackBtn = item.querySelector('.feedback-btn');
+                feedbackBtn.addEventListener('click', (event) => {
+                    submitFeedback(event, query, seg);
+                });
+
+                segmentsList.appendChild(item);
+            });
+
+            // 2. Auto-play first result
+            if (data.results.length > 0) {
+                const firstSeg = data.results[0];
+                const firstSplit = firstSeg.split && firstSeg.split !== "unknown" ? firstSeg.split : split;
+                playVideo(firstSeg.video_id, firstSeg.timestamp, firstSplit);
+            }
+        }
+
+        async function submitFeedback(event, query, segment) {
+            event.stopPropagation();
+            const btn = event.currentTarget;
+            const originalContent = btn.innerHTML;
+            
+            try {
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-spinner animate-spin"></i> <span>Saving...</span>';
+                
+                const response = await fetch('/feedback', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        query: query,
+                        video_id: segment.video_id,
+                        segment_id: segment.segment_id,
+                        timestamp: segment.timestamp,
+                        combined_score: segment.combined_score,
+                        text: segment.text_evidence ? segment.text_evidence.text : ""
+                    })
+                });
+                
+                const data = await response.json();
+                if (data.status === 'success') {
+                    btn.className = "text-xs flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-green-600 text-white border-green-700 pointer-events-none";
+                    btn.innerHTML = '<i class="fas fa-check-circle"></i> <span>Feedback Logged</span>';
+                } else {
+                    throw new Error(data.message);
+                }
+            } catch (err) {
+                console.error(err);
+                alert('Failed to save feedback: ' + err.message);
+                btn.disabled = false;
+                btn.innerHTML = originalContent;
+            }
+        }
+
+        function playVideo(videoId, timestamp, split) {
+            const videoUrl = `/video/${split}/${videoId}.mp4`;
+            const videoIdDisplay = document.getElementById('current-video-id');
+            const timestampDisplay = document.getElementById('current-timestamp');
+            const overlay = document.getElementById('video-overlay');
+
+            videoIdDisplay.textContent = videoId;
+            timestampDisplay.textContent = formatTimestamp(timestamp);
+
+            // If it's a new video, update source
+            if (!videoElement.src.includes(videoId)) {
+                videoElement.src = videoUrl;
+            }
+
+            // Handle timestamp jump
+            let startTime = 0;
+            if (Array.isArray(timestamp) && timestamp.length > 0) {
+                startTime = timestamp[0];
+            } else if (typeof timestamp === 'string') {
+                // Parse "X.XXs - Y.YYs"
+                const match = timestamp.match(/([\d\.]+)/);
+                if (match) startTime = parseFloat(match[0]);
+            }
+
+            overlay.style.opacity = '1';
+            videoElement.currentTime = startTime;
+            videoElement.play();
+            
+            setTimeout(() => {
+                overlay.style.opacity = '0';
+            }, 1000);
+        }
+
+        function formatTimestamp(ts) {
+            if (Array.isArray(ts)) {
+                return `${ts[0].toFixed(2)}s - ${ts[1].toFixed(2)}s`;
+            }
+            return ts;
+        }
+    </script>
+</body>
+</html>
